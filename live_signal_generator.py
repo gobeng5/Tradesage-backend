@@ -4,6 +4,7 @@ from indicator_utils import (
     calculate_rsi, calculate_sma, calculate_ema,
     detect_bullish_engulfing, detect_pin_bar, detect_breakout
 )
+from signal_logger import log_signal
 
 # === CONFIG ===
 ALPHA_VANTAGE_API_KEY = "241RNJP4JG802QBZ"
@@ -31,7 +32,7 @@ def fetch_candles(from_symbol, to_symbol, interval="15min"):
         data = response.json()
         return data.get("Time Series FX (15min)", {})
     except Exception as e:
-        print(f"Request failed: {e}")
+        print(f"❌ Request failed for {from_symbol}/{to_symbol}: {e}")
         return {}
 
 def parse_candle_data(candles):
@@ -93,7 +94,7 @@ def analyze_pair(pair):
         "timestamp": timestamp
     }
 
-# === Caching Logic ===
+# === Caching + Logging ===
 def generate_live_signals():
     now = datetime.datetime.utcnow()
     if CACHE["timestamp"]:
@@ -107,6 +108,7 @@ def generate_live_signals():
     for pair in PAIRS:
         signal = analyze_pair(pair)
         if signal:
+            log_signal(signal)
             signals.append(signal)
 
     CACHE["signals"] = signals
