@@ -1,10 +1,10 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.live_signal_generator import generate_live_signals
-from backend.analyzer import analyze_screenshot
-from backend.scheduler import start_scheduler
-from backend.history import fetch_signal_history
+from live_signal_generator import generate_live_signals
+from analyzer import analyze_screenshot
+from scheduler import start_scheduler
+from history import fetch_signal_history
 
 app = FastAPI()
 
