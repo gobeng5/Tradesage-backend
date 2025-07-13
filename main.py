@@ -1,12 +1,12 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from scheduler import start_scheduler
-from signal_generator import generate_signals
+from live_signal_generator import generate_live_signals
 from analyzer import analyze_screenshot
+from scheduler import start_scheduler
 
 app = FastAPI()
 
-# CORS setup for frontend deployment
+# ✅ CORS setup for frontend access
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://tradesage-frontend.onrender.com"],
@@ -15,14 +15,17 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ✅ Health check endpoint
 @app.get("/status")
 def status():
-    return {"message": "TradeSage FX backend is live!"}
+    return {"message": "TradeSage FX backend is live and streaming market intelligence!"}
 
+# ✅ Live signal endpoint from Alpha Vantage
 @app.get("/signals")
 def signals():
-    return generate_signals()
+    return generate_live_signals()
 
+# ✅ Screenshot analysis endpoint
 @app.post("/analyze")
 async def analyze_image(image: UploadFile = File(...)):
     contents = await image.read()
@@ -30,5 +33,5 @@ async def analyze_image(image: UploadFile = File(...)):
     result["filename"] = image.filename
     return result
 
-# Start recurring 15-minute signal generation
+# ✅ Optional scheduler for internal routines (can be customized later)
 start_scheduler()
