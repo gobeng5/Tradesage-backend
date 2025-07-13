@@ -3,3 +3,4 @@ uvicorn
 apscheduler
 pillow
 python-multipart
+requests
