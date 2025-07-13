@@ -1,8 +1,10 @@
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from live_signal_generator import generate_live_signals
-from analyzer import analyze_screenshot
-from scheduler import start_scheduler
+
+from backend.live_signal_generator import generate_live_signals
+from backend.analyzer import analyze_screenshot
+from backend.scheduler import start_scheduler
+from backend.history import fetch_signal_history
 
 app = FastAPI()
 
@@ -33,5 +35,10 @@ async def analyze_image(image: UploadFile = File(...)):
     result["filename"] = image.filename
     return result
 
-# ✅ Optional scheduler for internal routines (can be customized later)
+# ✅ Signal history endpoint from SQLite
+@app.get("/history")
+def history():
+    return {"history": fetch_signal_history()}
+
+# ✅ Internal scheduler (e.g., background tasks or refresh hooks)
 start_scheduler()
