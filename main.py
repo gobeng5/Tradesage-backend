@@ -5,6 +5,7 @@ from live_signal_generator import generate_live_signals
 from analyzer import analyze_screenshot
 from scheduler import start_scheduler
 from history import fetch_signal_history
+from analytics import get_confidence_trend
 
 app = FastAPI()
 
@@ -22,7 +23,7 @@ app.add_middleware(
 def status():
     return {"message": "TradeSage FX backend is live and streaming market intelligence!"}
 
-# ✅ Live signal endpoint from Alpha Vantage
+# ✅ Live signal endpoint
 @app.get("/signals")
 def signals():
     return generate_live_signals()
@@ -35,10 +36,15 @@ async def analyze_image(image: UploadFile = File(...)):
     result["filename"] = image.filename
     return result
 
-# ✅ Signal history endpoint from SQLite
+# ✅ Signal history endpoint
 @app.get("/history")
 def history():
     return {"history": fetch_signal_history()}
 
-# ✅ Internal scheduler (e.g., background tasks or refresh hooks)
+# ✅ Confidence analytics endpoint
+@app.get("/analytics/confidence")
+def confidence(pair: str = None, limit: int = 100):
+    return {"trend": get_confidence_trend(pair, limit)}
+
+# ✅ Background scheduler activation
 start_scheduler()
