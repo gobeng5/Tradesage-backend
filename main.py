@@ -2,11 +2,11 @@ from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from scheduler import start_scheduler
 from signal_generator import generate_signals
-import random
+from analyzer import analyze_screenshot
 
 app = FastAPI()
 
-# Allow requests from frontend
+# CORS setup for frontend deployment
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["https://tradesage-frontend.onrender.com"],
@@ -25,16 +25,10 @@ def signals():
 
 @app.post("/analyze")
 async def analyze_image(image: UploadFile = File(...)):
-    # For now, mock analysis results
-    mock_strategy = random.choice(["Breakout", "Pullback", "Reversal", "Momentum"])
-    confidence = round(random.uniform(0.65, 0.95), 2)
+    contents = await image.read()
+    result = analyze_screenshot(contents)
+    result["filename"] = image.filename
+    return result
 
-    return {
-        "filename": image.filename,
-        "strategy_detected": mock_strategy,
-        "confidence_score": confidence,
-        "comment": f"Screenshot appears to reflect a {mock_strategy} setup with {int(confidence * 100)}% confidence."
-    }
-
-# Start 15-min analysis scheduler
+# Start recurring 15-minute signal generation
 start_scheduler()
