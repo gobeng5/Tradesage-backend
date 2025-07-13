@@ -18,7 +18,44 @@ PAIRS = [
 CACHE = {"signals": [], "timestamp": None}
 CACHE_DURATION_MINUTES = 15
 
-# === API Fetch ===
+# === Thresholds for Each Session or Overlap ===
+SESSION_THRESHOLDS = {
+    "Sydney": 0.78,
+    "Tokyo": 0.80,
+    "London": 0.88,
+    "New York": 0.90,
+    "Tokyo-London": 0.85,
+    "London-New York": 0.86
+}
+
+# Optional manual override
+MANUAL_OVERRIDE_THRESHOLD = None  # Set float to override threshold manually
+
+# === Session Detection Logic ===
+def get_current_session():
+    hour = datetime.datetime.utcnow().hour
+    if 22 <= hour < 2:
+        return "Sydney"
+    elif 2 <= hour < 9:
+        return "Tokyo"
+    elif 9 <= hour < 14:
+        return "London"
+    elif 14 <= hour < 17:
+        return "London-New York"
+    elif 17 <= hour < 20:
+        return "New York"
+    elif 8 <= hour < 9:
+        return "Tokyo-London"
+    else:
+        return "Sydney"  # fallback for quieter gaps
+
+def get_confidence_threshold():
+    if MANUAL_OVERRIDE_THRESHOLD is not None:
+        return MANUAL_OVERRIDE_THRESHOLD
+    session = get_current_session()
+    return SESSION_THRESHOLDS.get(session, 0.80)
+
+# === Fetching Candles from Alpha Vantage ===
 def fetch_candles(from_symbol, to_symbol, interval="15min"):
     params = {
         "function": "FX_INTRADAY",
@@ -29,8 +66,8 @@ def fetch_candles(from_symbol, to_symbol, interval="15min"):
         "outputsize": "compact"
     }
     try:
-        response = requests.get(BASE_URL, params=params)
-        data = response.json()
+        res = requests.get(BASE_URL, params=params)
+        data = res.json()
         return data.get("Time Series FX (15min)", {})
     except Exception as e:
         print(f"❌ Request failed for {from_symbol}/{to_symbol}: {e}")
@@ -46,7 +83,7 @@ def parse_candle_data(candles):
     latest_close = closes[0] if closes else None
     return opens, highs, lows, closes, latest_time, latest_close
 
-# === Signal Analysis ===
+# === Signal Analysis per Pair ===
 def analyze_pair(pair):
     candles = fetch_candles(pair[0], pair[1])
     if not candles:
@@ -56,26 +93,21 @@ def analyze_pair(pair):
     confirmations = []
     strategy_notes = []
 
-    # RSI
     rsi = calculate_rsi(closes)
     if rsi and rsi < 30:
         confirmations.append("RSI oversold")
         strategy_notes.append(f"RSI: {rsi}")
 
-    # MA crossover
     ema = calculate_ema(closes)
     sma = calculate_sma(closes)
     if ema and sma and ema > sma:
         confirmations.append("EMA crossover")
         strategy_notes.append(f"EMA: {ema} > SMA: {sma}")
 
-    # Candlestick patterns
     if detect_bullish_engulfing(opens, closes):
         confirmations.append("Bullish Engulfing")
     if detect_pin_bar(opens, closes, highs, lows):
         confirmations.append("Pin Bar")
-
-    # Breakout detection
     if detect_breakout(closes):
         confirmations.append("Breakout Above Resistance")
 
@@ -84,10 +116,9 @@ def analyze_pair(pair):
     confidence = 0.6 + 0.1 * len(confirmations)
     confidence = round(min(confidence, 0.99), 2)
 
-    # Trade levels (assume Buy setup logic)
     entry = latest_price
-    take_profit = round(entry * (1 + 0.0025), 5)  # ~25 pips
-    stop_loss = round(entry * (1 - 0.0015), 5)    # ~15 pips
+    take_profit = round(entry * (1 + 0.0025), 5)
+    stop_loss = round(entry * (1 - 0.0015), 5)
 
     return {
         "pair": f"{pair[0]}/{pair[1]}",
@@ -103,7 +134,7 @@ def analyze_pair(pair):
         "timestamp": timestamp
     }
 
-# === Signal Engine ===
+# === Live Signal Engine ===
 def generate_live_signals():
     now = datetime.datetime.utcnow()
     if CACHE["timestamp"]:
@@ -112,7 +143,11 @@ def generate_live_signals():
             print("📦 Using cached signals...")
             return {"signals": CACHE["signals"]}
 
-    print("⚡ Fetching fresh signals...")
+    session = get_current_session()
+    threshold = get_confidence_threshold()
+    print(f"⚡ Current Session: {session}")
+    print(f"🎯 Active Confidence Threshold: {threshold:.2f}")
+
     signals = []
     for pair in PAIRS:
         signal = analyze_pair(pair)
@@ -120,7 +155,7 @@ def generate_live_signals():
             log_signal(signal)
             signals.append(signal)
 
-            if signal["confidence"] >= 0.9:
+            if signal["confidence"] >= threshold:
                 notify_telegram(signal)
 
     CACHE["signals"] = signals
