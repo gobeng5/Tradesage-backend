@@ -5,10 +5,18 @@ from indicator_utils import (
     detect_bullish_engulfing, detect_pin_bar, detect_breakout
 )
 
+# === CONFIG ===
 ALPHA_VANTAGE_API_KEY = "241RNJP4JG802QBZ"
 BASE_URL = "https://www.alphavantage.co/query"
-PAIRS = [("EUR", "USD"), ("GBP", "USD"), ("USD", "JPY"), ("AUD", "USD")]
+PAIRS = [
+    ("EUR", "USD"), ("USD", "JPY"), ("GBP", "USD"), ("AUD", "USD"),
+    ("USD", "CAD"), ("USD", "CHF"), ("NZD", "USD"), ("EUR", "JPY"),
+    ("GBP", "JPY"), ("EUR", "GBP")
+]
+CACHE = {"signals": [], "timestamp": None}
+CACHE_DURATION_MINUTES = 15
 
+# === API Fetch ===
 def fetch_candles(from_symbol, to_symbol, interval="15min"):
     params = {
         "function": "FX_INTRADAY",
@@ -18,10 +26,13 @@ def fetch_candles(from_symbol, to_symbol, interval="15min"):
         "apikey": ALPHA_VANTAGE_API_KEY,
         "outputsize": "compact"
     }
-    response = requests.get(BASE_URL, params=params)
-    data = response.json()
-    candles = data.get("Time Series FX (15min)", {})
-    return candles
+    try:
+        response = requests.get(BASE_URL, params=params)
+        data = response.json()
+        return data.get("Time Series FX (15min)", {})
+    except Exception as e:
+        print(f"Request failed: {e}")
+        return {}
 
 def parse_candle_data(candles):
     timestamps = sorted(candles.keys(), reverse=True)
@@ -32,65 +43,72 @@ def parse_candle_data(candles):
     latest_time = timestamps[0] if timestamps else None
     return opens, highs, lows, closes, latest_time
 
+# === Signal Analysis ===
 def analyze_pair(pair):
-    try:
-        candles = fetch_candles(pair[0], pair[1])
-        if not candles:
-            return None
-
-        opens, highs, lows, closes, timestamp = parse_candle_data(candles)
-
-        confirmations = []
-        strategy_notes = []
-
-        # RSI check
-        rsi = calculate_rsi(closes)
-        if rsi and rsi < 30:
-            confirmations.append("RSI oversold")
-            strategy_notes.append(f"RSI: {rsi}")
-
-        # Moving Average crossover
-        ema = calculate_ema(closes)
-        sma = calculate_sma(closes)
-        if ema and sma and ema > sma:
-            confirmations.append("EMA crossover")
-            strategy_notes.append(f"EMA: {ema} > SMA: {sma}")
-
-        # Candlestick patterns
-        if detect_bullish_engulfing(opens, closes):
-            confirmations.append("Bullish Engulfing")
-        if detect_pin_bar(opens, closes, highs, lows):
-            confirmations.append("Pin Bar")
-
-        # Breakout pattern
-        if detect_breakout(closes):
-            confirmations.append("Breakout Above Resistance")
-
-        # Signal scoring
-        signal_type = "Buy" if confirmations else "Hold"
-        strategy = "Composite Strategy"
-        confidence = 0.6 + 0.1 * len(confirmations)  # 60% base + 10% per confirmation
-        confidence = round(min(confidence, 0.99), 2)
-
-        return {
-            "pair": f"{pair[0]}/{pair[1]}",
-            "timeframe": "15min",
-            "strategy": strategy,
-            "confirmations": confirmations,
-            "indicators": strategy_notes,
-            "signal_type": signal_type,
-            "confidence": confidence,
-            "timestamp": timestamp
-        }
-
-    except Exception as e:
-        print(f"Error analyzing {pair}: {e}")
+    candles = fetch_candles(pair[0], pair[1])
+    if not candles:
         return None
 
+    opens, highs, lows, closes, timestamp = parse_candle_data(candles)
+    confirmations = []
+    strategy_notes = []
+
+    # RSI
+    rsi = calculate_rsi(closes)
+    if rsi and rsi < 30:
+        confirmations.append("RSI oversold")
+        strategy_notes.append(f"RSI: {rsi}")
+
+    # MA crossover
+    ema = calculate_ema(closes)
+    sma = calculate_sma(closes)
+    if ema and sma and ema > sma:
+        confirmations.append("EMA crossover")
+        strategy_notes.append(f"EMA: {ema} > SMA: {sma}")
+
+    # Candlestick patterns
+    if detect_bullish_engulfing(opens, closes):
+        confirmations.append("Bullish Engulfing")
+    if detect_pin_bar(opens, closes, highs, lows):
+        confirmations.append("Pin Bar")
+
+    # Breakout detection
+    if detect_breakout(closes):
+        confirmations.append("Breakout Above Resistance")
+
+    # Final signal
+    signal_type = "Buy" if confirmations else "Hold"
+    strategy = "Composite Strategy"
+    confidence = 0.6 + 0.1 * len(confirmations)
+    confidence = round(min(confidence, 0.99), 2)
+
+    return {
+        "pair": f"{pair[0]}/{pair[1]}",
+        "timeframe": "15min",
+        "strategy": strategy,
+        "confirmations": confirmations,
+        "indicators": strategy_notes,
+        "signal_type": signal_type,
+        "confidence": confidence,
+        "timestamp": timestamp
+    }
+
+# === Caching Logic ===
 def generate_live_signals():
+    now = datetime.datetime.utcnow()
+    if CACHE["timestamp"]:
+        age = (now - CACHE["timestamp"]).total_seconds() / 60
+        if age < CACHE_DURATION_MINUTES:
+            print("📦 Using cached signals...")
+            return {"signals": CACHE["signals"]}
+
+    print("⚡ Fetching fresh signals...")
     signals = []
     for pair in PAIRS:
         signal = analyze_pair(pair)
         if signal:
             signals.append(signal)
+
+    CACHE["signals"] = signals
+    CACHE["timestamp"] = now
     return {"signals": signals}
