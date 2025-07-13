@@ -5,6 +5,7 @@ from indicator_utils import (
     detect_bullish_engulfing, detect_pin_bar, detect_breakout
 )
 from signal_logger import log_signal
+from notifier import notify_telegram
 
 # === CONFIG ===
 ALPHA_VANTAGE_API_KEY = "241RNJP4JG802QBZ"
@@ -42,7 +43,8 @@ def parse_candle_data(candles):
     lows = [float(candles[t]["3. low"]) for t in timestamps]
     closes = [float(candles[t]["4. close"]) for t in timestamps]
     latest_time = timestamps[0] if timestamps else None
-    return opens, highs, lows, closes, latest_time
+    latest_close = closes[0] if closes else None
+    return opens, highs, lows, closes, latest_time, latest_close
 
 # === Signal Analysis ===
 def analyze_pair(pair):
@@ -50,7 +52,7 @@ def analyze_pair(pair):
     if not candles:
         return None
 
-    opens, highs, lows, closes, timestamp = parse_candle_data(candles)
+    opens, highs, lows, closes, timestamp, latest_price = parse_candle_data(candles)
     confirmations = []
     strategy_notes = []
 
@@ -77,11 +79,15 @@ def analyze_pair(pair):
     if detect_breakout(closes):
         confirmations.append("Breakout Above Resistance")
 
-    # Final signal
     signal_type = "Buy" if confirmations else "Hold"
     strategy = "Composite Strategy"
     confidence = 0.6 + 0.1 * len(confirmations)
     confidence = round(min(confidence, 0.99), 2)
+
+    # Trade levels (assume Buy setup logic)
+    entry = latest_price
+    take_profit = round(entry * (1 + 0.0025), 5)  # ~25 pips
+    stop_loss = round(entry * (1 - 0.0015), 5)    # ~15 pips
 
     return {
         "pair": f"{pair[0]}/{pair[1]}",
@@ -91,10 +97,13 @@ def analyze_pair(pair):
         "indicators": strategy_notes,
         "signal_type": signal_type,
         "confidence": confidence,
+        "entry": entry,
+        "take_profit": take_profit,
+        "stop_loss": stop_loss,
         "timestamp": timestamp
     }
 
-# === Caching + Logging ===
+# === Signal Engine ===
 def generate_live_signals():
     now = datetime.datetime.utcnow()
     if CACHE["timestamp"]:
@@ -110,6 +119,9 @@ def generate_live_signals():
         if signal:
             log_signal(signal)
             signals.append(signal)
+
+            if signal["confidence"] >= 0.9:
+                notify_telegram(signal)
 
     CACHE["signals"] = signals
     CACHE["timestamp"] = now
