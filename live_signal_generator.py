@@ -28,10 +28,10 @@ SESSION_THRESHOLDS = {
     "London-New York": 0.86
 }
 
-# Optional manual override
-MANUAL_OVERRIDE_THRESHOLD = None  # Set float to override threshold manually
+# Optional manual override to force signals (use for debugging)
+MANUAL_OVERRIDE_THRESHOLD = 0.6  # <-- Lower this temporarily for testing
 
-# === Session Detection Logic ===
+# === Session Detection ===
 def get_current_session():
     hour = datetime.datetime.utcnow().hour
     if 22 <= hour < 2:
@@ -47,7 +47,7 @@ def get_current_session():
     elif 8 <= hour < 9:
         return "Tokyo-London"
     else:
-        return "Sydney"  # fallback for quieter gaps
+        return "Sydney"  # fallback
 
 def get_confidence_threshold():
     if MANUAL_OVERRIDE_THRESHOLD is not None:
@@ -55,7 +55,7 @@ def get_confidence_threshold():
     session = get_current_session()
     return SESSION_THRESHOLDS.get(session, 0.80)
 
-# === Fetching Candles from Alpha Vantage ===
+# === Fetching Candle Data ===
 def fetch_candles(from_symbol, to_symbol, interval="15min"):
     params = {
         "function": "FX_INTRADAY",
@@ -68,7 +68,12 @@ def fetch_candles(from_symbol, to_symbol, interval="15min"):
     try:
         res = requests.get(BASE_URL, params=params)
         data = res.json()
-        return data.get("Time Series FX (15min)", {})
+
+        if "Time Series FX (15min)" not in data:
+            print(f"⚠️ No candle data returned for {from_symbol}/{to_symbol}")
+            print(f"Response: {data}")
+            return {}
+        return data["Time Series FX (15min)"]
     except Exception as e:
         print(f"❌ Request failed for {from_symbol}/{to_symbol}: {e}")
         return {}
@@ -83,26 +88,34 @@ def parse_candle_data(candles):
     latest_close = closes[0] if closes else None
     return opens, highs, lows, closes, latest_time, latest_close
 
-# === Signal Analysis per Pair ===
+# === Analyze Individual Pair ===
 def analyze_pair(pair):
     candles = fetch_candles(pair[0], pair[1])
     if not candles:
+        print(f"⛔ Skipping {pair[0]}/{pair[1]} due to no data.")
         return None
 
     opens, highs, lows, closes, timestamp, latest_price = parse_candle_data(candles)
+    if len(closes) < 10:
+        print(f"⛔ Not enough candles for {pair[0]}/{pair[1]} (got {len(closes)})")
+        return None
+
     confirmations = []
     strategy_notes = []
 
     rsi = calculate_rsi(closes)
-    if rsi and rsi < 30:
-        confirmations.append("RSI oversold")
-        strategy_notes.append(f"RSI: {rsi}")
-
     ema = calculate_ema(closes)
     sma = calculate_sma(closes)
+
+    print(f"🔍 {pair[0]}/{pair[1]} - RSI: {rsi}, EMA: {ema}, SMA: {sma}")
+
+    if rsi and rsi < 30:
+        confirmations.append("RSI oversold")
+        strategy_notes.append(f"RSI: {rsi:.2f}")
+
     if ema and sma and ema > sma:
         confirmations.append("EMA crossover")
-        strategy_notes.append(f"EMA: {ema} > SMA: {sma}")
+        strategy_notes.append(f"EMA: {ema:.2f} > SMA: {sma:.2f}")
 
     if detect_bullish_engulfing(opens, closes):
         confirmations.append("Bullish Engulfing")
@@ -115,6 +128,11 @@ def analyze_pair(pair):
     strategy = "Composite Strategy"
     confidence = 0.6 + 0.1 * len(confirmations)
     confidence = round(min(confidence, 0.99), 2)
+
+    print(f"✅ {pair[0]}/{pair[1]} Signal: {signal_type} | Confirmations: {confirmations} | Confidence: {confidence}")
+
+    if signal_type == "Hold":
+        return None
 
     entry = latest_price
     take_profit = round(entry * (1 + 0.0025), 5)
@@ -155,6 +173,7 @@ def generate_live_signals():
             log_signal(signal)
             signals.append(signal)
 
+            # DEBUG MODE: Temporarily notify all signals (comment out if needed)
             if signal["confidence"] >= threshold:
                 notify_telegram(signal)
 
