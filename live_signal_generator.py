@@ -28,10 +28,10 @@ SESSION_THRESHOLDS = {
     "London-New York": 0.86
 }
 
-# Optional manual override to force signals (use for debugging)
-MANUAL_OVERRIDE_THRESHOLD = 0.6  # <-- Lower this temporarily for testing
+# === Temporary override for debugging ===
+MANUAL_OVERRIDE_THRESHOLD = 0.6  # Lowered threshold to allow testing
 
-# === Session Detection ===
+# === Session Detection Logic ===
 def get_current_session():
     hour = datetime.datetime.utcnow().hour
     if 22 <= hour < 2:
@@ -55,7 +55,7 @@ def get_confidence_threshold():
     session = get_current_session()
     return SESSION_THRESHOLDS.get(session, 0.80)
 
-# === Fetching Candle Data ===
+# === Fetching Candles from Alpha Vantage ===
 def fetch_candles(from_symbol, to_symbol, interval="15min"):
     params = {
         "function": "FX_INTRADAY",
@@ -68,12 +68,7 @@ def fetch_candles(from_symbol, to_symbol, interval="15min"):
     try:
         res = requests.get(BASE_URL, params=params)
         data = res.json()
-
-        if "Time Series FX (15min)" not in data:
-            print(f"⚠️ No candle data returned for {from_symbol}/{to_symbol}")
-            print(f"Response: {data}")
-            return {}
-        return data["Time Series FX (15min)"]
+        return data.get("Time Series FX (15min)", {})
     except Exception as e:
         print(f"❌ Request failed for {from_symbol}/{to_symbol}: {e}")
         return {}
@@ -88,34 +83,27 @@ def parse_candle_data(candles):
     latest_close = closes[0] if closes else None
     return opens, highs, lows, closes, latest_time, latest_close
 
-# === Analyze Individual Pair ===
+# === Signal Analysis per Pair ===
 def analyze_pair(pair):
     candles = fetch_candles(pair[0], pair[1])
     if not candles:
-        print(f"⛔ Skipping {pair[0]}/{pair[1]} due to no data.")
+        print(f"⚠️ No candle data for {pair[0]}/{pair[1]}")
         return None
 
     opens, highs, lows, closes, timestamp, latest_price = parse_candle_data(candles)
-    if len(closes) < 10:
-        print(f"⛔ Not enough candles for {pair[0]}/{pair[1]} (got {len(closes)})")
-        return None
-
     confirmations = []
     strategy_notes = []
 
     rsi = calculate_rsi(closes)
-    ema = calculate_ema(closes)
-    sma = calculate_sma(closes)
-
-    print(f"🔍 {pair[0]}/{pair[1]} - RSI: {rsi}, EMA: {ema}, SMA: {sma}")
-
     if rsi and rsi < 30:
         confirmations.append("RSI oversold")
         strategy_notes.append(f"RSI: {rsi:.2f}")
 
+    ema = calculate_ema(closes)
+    sma = calculate_sma(closes)
     if ema and sma and ema > sma:
         confirmations.append("EMA crossover")
-        strategy_notes.append(f"EMA: {ema:.2f} > SMA: {sma:.2f}")
+        strategy_notes.append(f"EMA: {ema:.4f} > SMA: {sma:.4f}")
 
     if detect_bullish_engulfing(opens, closes):
         confirmations.append("Bullish Engulfing")
@@ -124,15 +112,14 @@ def analyze_pair(pair):
     if detect_breakout(closes):
         confirmations.append("Breakout Above Resistance")
 
-    signal_type = "Buy" if confirmations else "Hold"
+    if not confirmations:
+        print(f"⛔ {pair[0]}/{pair[1]} skipped — no valid confirmations.")
+        return None
+
+    signal_type = "Buy"
     strategy = "Composite Strategy"
     confidence = 0.6 + 0.1 * len(confirmations)
     confidence = round(min(confidence, 0.99), 2)
-
-    print(f"✅ {pair[0]}/{pair[1]} Signal: {signal_type} | Confirmations: {confirmations} | Confidence: {confidence}")
-
-    if signal_type == "Hold":
-        return None
 
     entry = latest_price
     take_profit = round(entry * (1 + 0.0025), 5)
@@ -149,7 +136,9 @@ def analyze_pair(pair):
         "entry": entry,
         "take_profit": take_profit,
         "stop_loss": stop_loss,
-        "timestamp": timestamp
+        "timestamp": timestamp,
+        "trade_type": "Intraday",
+        "macro_bias": "Neutral"
     }
 
 # === Live Signal Engine ===
@@ -163,17 +152,16 @@ def generate_live_signals():
 
     session = get_current_session()
     threshold = get_confidence_threshold()
-    print(f"⚡ Current Session: {session}")
+    print(f"\n⚡ Current Session: {session}")
     print(f"🎯 Active Confidence Threshold: {threshold:.2f}")
 
     signals = []
     for pair in PAIRS:
         signal = analyze_pair(pair)
         if signal:
+            print(f"✅ {signal['pair']} | Confidence: {signal['confidence']} | Confirmations: {signal['confirmations']}")
             log_signal(signal)
             signals.append(signal)
-
-            # DEBUG MODE: Temporarily notify all signals (comment out if needed)
             if signal["confidence"] >= threshold:
                 notify_telegram(signal)
 
